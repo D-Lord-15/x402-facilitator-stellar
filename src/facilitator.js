@@ -11,11 +11,38 @@ import { signerMetrics } from './metrics.js';
 import { KeyManager } from './key-manager.js';
 import { createFeeEstimator } from './horizon-client.js';
 
-async function loadRemoteKeys(url) {
-  const response = await fetch(url);
+async function loadRemoteKeys(url, timeoutMs = keySourceTimeoutMs()) {
+  let response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+      throw new Error(`key source fetch timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  }
   if (!response.ok) throw new Error(`key source returned HTTP ${response.status}`);
   const body = await response.json();
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new Error('key source payload invalid: missing "keys" field');
+  }
+  if (!Array.isArray(body.keys)) {
+    throw new Error('key source payload invalid: "keys" must be an array');
+  }
+  if (body.keys.length === 0) {
+    throw new Error('key source payload invalid: "keys" must be non-empty');
+  }
   return body.keys;
+}
+
+/**
+ * Bounded timeout for the remote key-source fetch (#493). House convention
+ * is AbortSignal.timeout (see embeddings, failover-health, readiness), so
+ * this uses the same one-liner rather than a bespoke controller.
+ */
+function keySourceTimeoutMs() {
+  const raw = Number(process.env.KEY_MANAGER_FETCH_TIMEOUT_MS ?? 5_000);
+  return Number.isFinite(raw) && raw > 0 ? raw : 5_000;
 }
 
 export function buildFacilitator(config) {
@@ -92,4 +119,4 @@ export function buildFacilitator(config) {
   return { facilitator, signers, feeBumpSigners, keyManagers, feeEstimators, schemes };
 }
 
-export { TESTNET, PUBNET };
+export { TESTNET, PUBNET, loadRemoteKeys };

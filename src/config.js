@@ -369,6 +369,14 @@ export function resolveConfig(env = process.env) {
     metricsPort: env.METRICS_PORT ? Number(env.METRICS_PORT) : null,
 
     /**
+     * Bind address for the dedicated metrics listener (#491). Defaults to
+     * loopback so a METRICS_PORT listener is off the public network unless
+     * the operator opts into a wider bind explicitly (e.g.
+     * METRICS_HOST=0.0.0.0). Unused when METRICS_PORT is unset.
+     */
+    metricsHost: (env.METRICS_HOST ?? '127.0.0.1').trim() || '127.0.0.1',
+
+    /**
      * Deployment environment. Unset in the Docker image by default; only used
      * here to decide whether a local .env file is loaded and whether HSTS is
      * sent. Never gate error-detail behaviour on it — see app.js.

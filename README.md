@@ -81,13 +81,11 @@ Reference material: [Architecture](docs/ARCHITECTURE.md) ·
 [Bazaar discovery](docs/BAZAAR.md) · [MCP server](docs/MCP.md) ·
 [Conformance](docs/CONFORMANCE.md) · [Deployment](docs/DEPLOYMENT.md) ·
 [Operations](docs/OPERATIONS.md) · [Authentication](docs/AUTHENTICATION.md) ·
- feat/upstream-drift-watch
 [Threat model](docs/THREAT-MODEL.md) · [Audit readiness](docs/AUDIT.md) ·
 [Privacy](docs/PRIVACY.md) · [Upstream tracking](docs/UPSTREAM.md) ·
 
 [Business model](docs/BUSINESS-MODEL.md) · [Threat model](docs/THREAT-MODEL.md) ·
 [Audit readiness](docs/AUDIT.md) · [Privacy](docs/PRIVACY.md) ·
- main
 [Glossary](docs/GLOSSARY.md) · [Changelog](CHANGELOG.md)
 
 Sibling repositories in the [Accensa organisation](https://github.com/accensa):
@@ -215,7 +213,6 @@ for the log fields and the alert to set on each metric.
 
 ## Conformance
 
- docs/conformance
 Acceptance is tested at the wire level with stock SDK code, not by reading a claim. The
 canonical, citable report — with versions, per-item evidence, settled transaction hashes,
 what fails and why, and commands to reproduce it yourself — is
@@ -346,9 +343,10 @@ for — plus the one documented client-side glue deviation, are in
   and published at **<https://accensa.github.io/x402-facilitator-stellar/>** — currently
   showing `no_sla` until a public endpoint exists (blocked by
   [#16](https://github.com/accensa/x402-facilitator-stellar/issues/16)).
-- **No persistence by default.** The catalog has a PostgreSQL schema in `migrations/` and
-  uses it when `DATABASE_URL` is set; the settlement path holds nothing durable, tracked
-  in [#10](https://github.com/accensa/x402-facilitator-stellar/issues/10). When
+- **In-memory when `DATABASE_URL` unset, Postgres when set.** The catalog uses a PostgreSQL
+  schema in `migrations/` and the settlement path folds into an event log plus projection
+  (`docs/EVENT-SOURCING.md`, `docs/CQRS-SETTLEMENT-STREAMING.md`) when `DATABASE_URL` is set,
+  with `SETTLE_REQUIRE_DURABLE_STORE` gating falls back to the in-memory store. When
   `DATABASE_URL` is set you can also add `DATABASE_URL_REPLICA` to offload settlement
   status reads and the reconciliation sweep onto a read replica (CQRS fallback to primary
   on replication lag) — see `docs/DEPLOYMENT.md` (#121).
@@ -382,4 +380,3 @@ and how to run conformance against a branch.
 
 Apache-2.0 — see [LICENSE](LICENSE). Chosen to match upstream `@x402/*` so work here can
 be contributed back.
-// fix

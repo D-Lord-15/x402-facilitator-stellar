@@ -52,6 +52,23 @@ function describeThrown(err) {
 }
 
 /**
+ * Renders the full Prometheus exposition served on every /metrics surface
+ * (#492).
+ *
+ * Both the app's GET /metrics route and the dedicated METRICS_PORT listener
+ * in server.js must serve the same series: the registry plus the
+ * signer-selection series. A future metric added to only one surface would
+ * silently drop alert data on the other, so there is exactly one function
+ * that builds the exposition and both listeners call it.
+ *
+ * @param {object} metricsRegistry - registry from createMetrics()
+ * @returns {string} full Prometheus exposition text
+ */
+export function renderFullMetrics(metricsRegistry) {
+  return metricsRegistry.render() + signerMetrics.toPrometheusText();
+}
+
+/**
  * Builds the Fastify app.
  *
  * Takes its collaborators rather than reaching for module state, which is what
@@ -375,7 +392,7 @@ export async function createApp(
   if (serveMetrics) {
     app.get('/metrics', async (_req, reply) => {
       reply.header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
-      return reply.send(metrics.render() + signerMetrics.toPrometheusText());
+      return reply.send(renderFullMetrics(metrics));
     });
   }
 

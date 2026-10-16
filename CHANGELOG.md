@@ -97,6 +97,11 @@ pinned.
 
 ### Changed
 
+- **Behaviour change:** the dedicated metrics listener binds to `METRICS_HOST`
+  (default `127.0.0.1` loopback) instead of `0.0.0.0` (#491). An operator that
+  relied on scraping `METRICS_PORT` from another host must now set
+  `METRICS_HOST=0.0.0.0` explicitly (behind a firewall or on an internal
+  interface). Unset `METRICS_PORT` behaviour is unchanged.
 - **Breaking:** API key secrets must be at least 32 characters, enforced at boot
   (#207). The stored digest is a single unsalted SHA-256 — not a work factor — so
   the secret's own entropy is the whole of the key's strength, and a short one is
@@ -111,6 +116,19 @@ pinned.
 
 ### Fixed
 
+- README merge-conflict residue removed and the docs-links gate widened to the
+  repository root with a conflict-marker scan, so root README damage fails CI
+  (#490).
+- The dedicated `METRICS_PORT` listener now serves the full exposition
+  (registry plus signer-selection series) through the same `renderFullMetrics`
+  function as the app `GET /metrics` route, so signer alert series exist on
+  the scraped endpoint (#492).
+- Bounded outbound deadlines under the house `AbortSignal.timeout` convention:
+  the remote key-source fetch (`KEY_MANAGER_FETCH_TIMEOUT_MS`, default 5s,
+  with a `keys`-field shape check), the reconciliation RPC
+  (`RECONCILIATION_RPC_TIMEOUT_MS`, default 5s) and the three MCP CLI fetches
+  (`MCP_FETCH_TIMEOUT_MS`, default 10s, with a deadline message); MCP
+  spend-cap parsing names the field that failed (#493).
 - A failed re-embed no longer leaves the previous vector attached to a listing
   whose content has changed (#220). An upsert builds the new entry on top of the
   existing one, so it inherited the old vector; when the text changed, the dense

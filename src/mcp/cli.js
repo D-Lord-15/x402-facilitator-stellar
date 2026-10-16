@@ -4,6 +4,8 @@ import { McpServer } from './server.js';
 import { x402Client, x402HTTPClient } from '@x402/core/client';
 import { ExactStellarScheme as ExactStellarClient } from '@x402/stellar/exact/client';
 import { createEd25519Signer } from '@x402/stellar';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -12,18 +14,58 @@ const FACILITATOR_URL = process.env.FACILITATOR_URL || 'http://localhost:3402';
 const AGENT_PAYER_SECRET_KEY = process.env.AGENT_PAYER_SECRET_KEY;
 const NETWORK = process.env.NETWORK || 'stellar:testnet';
 
+/**
+ * Parses a stroops spend cap (#493). BigInt('abc') throws a bare SyntaxError;
+ * a corrupt cap must name the variable so the agent process fails with a
+ * diagnosable message instead of a generic one.
+ */
+export function parseStroopsLimit(raw, name, defaultValue) {
+  const text = (raw ?? String(defaultValue)).trim();
+  if (!/^\d+$/.test(text)) {
+    throw new Error(`Invalid ${name} "${raw ?? ''}": must be a non-negative integer in stroops.`);
+  }
+  return BigInt(text);
+}
+
+/**
+ * Outbound fetch timeout for the agent process (#493). House convention is
+ * AbortSignal.timeout (see embeddings, failover-health, readiness). A hung
+ * facilitator or resource server fails with a clear deadline message instead
+ * of hanging the agent process. Configurable via MCP_FETCH_TIMEOUT_MS.
+ */
+export function mcpFetchTimeoutMs() {
+  const raw = Number(process.env.MCP_FETCH_TIMEOUT_MS ?? 10_000);
+  return Number.isFinite(raw) && raw > 0 ? raw : 10_000;
+}
+
+/**
+ * fetch with a bounded deadline under the house convention. Timeout surfaces
+ * as a deadline message naming the URL and budget.
+ */
+export async function fetchWithTimeout(url, options = {}, timeoutMs = mcpFetchTimeoutMs()) {
+  try {
+    return await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+      throw new Error(`MCP request to ${url} timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  }
+}
+
 // Conservative defaults (in stroops: 1 XLM = 10_000_000 stroops).
 // Default max per-call: 1000 stroops = 0.0001 XLM
 // Default max per-session: 10000 stroops = 0.001 XLM
-function parseStroopEnv(envKey, defaultValue) {
-  const raw = process.env[envKey];
-  if (raw === undefined) return BigInt(defaultValue);
-  if (/^\d+$/.test(raw)) return BigInt(raw);
-  console.error(`ERROR: ${envKey} must be a decimal number of stroops, got "${raw}"`);
-  process.exit(1);
-}
-const MAX_FEE_PER_CALL_STROOPS = parseStroopEnv('MAX_FEE_PER_CALL_STROOPS', '1000');
-const MAX_SESSION_SPEND_STROOPS = parseStroopEnv('MAX_SESSION_SPEND_STROOPS', '10000');
+const MAX_FEE_PER_CALL_STROOPS = parseStroopsLimit(
+  process.env.MAX_FEE_PER_CALL_STROOPS,
+  'MAX_FEE_PER_CALL_STROOPS',
+  '1000',
+);
+const MAX_SESSION_SPEND_STROOPS = parseStroopsLimit(
+  process.env.MAX_SESSION_SPEND_STROOPS,
+  'MAX_SESSION_SPEND_STROOPS',
+  '10000',
+);
 
 let sessionSpendStroops = 0n;
 
@@ -72,7 +114,7 @@ async function fetchDiscovery(path, params) {
     }
   }
 
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
@@ -86,7 +128,7 @@ async function fetchDiscovery(path, params) {
   return res.json();
 }
 
-function assertCanSpend(amountStroops) {
+export function assertCanSpend(amountStroops) {
   const amount = BigInt(amountStroops);
   if (amount > MAX_FEE_PER_CALL_STROOPS) {
     throw new Error(
@@ -196,7 +238,7 @@ server.tool(
       options.headers = { 'Content-Type': 'application/json' };
     }
 
-    const unpaidRes = await fetch(url, options);
+    const unpaidRes = await fetchWithTimeout(url, options);
 
     if (unpaidRes.status !== 402) {
       // Endpoint is not gated or we somehow bypassed it
@@ -229,14 +271,31 @@ server.tool(
     }
 
     const amountStr = req0.maxAmountRequired || req0.price?.amount || '0';
-    const amount = BigInt(amountStr);
+    let amount;
+    try {
+      amount = parseStroopsLimit(amountStr, 'payment amount', '0');
+    } catch {
+      throw new Error(
+        `Invalid payment amount "${amountStr}": must be a non-negative integer in stroops.`,
+      );
+    }
 
     // 3. Spending Controls
     assertCanSpend(amount);
-    if (maxFeeStroops && amount > BigInt(maxFeeStroops)) {
-      throw new Error(
-        `Spending refused: Request amount (${amount} stroops) exceeds requested maxFeeStroops (${maxFeeStroops}).`,
-      );
+    if (maxFeeStroops) {
+      let cap;
+      try {
+        cap = parseStroopsLimit(maxFeeStroops, 'maxFeeStroops', '0');
+      } catch {
+        throw new Error(
+          `Invalid maxFeeStroops "${maxFeeStroops}": must be a non-negative integer in stroops.`,
+        );
+      }
+      if (amount > cap) {
+        throw new Error(
+          `Spending refused: Request amount (${amount} stroops) exceeds requested maxFeeStroops (${maxFeeStroops}).`,
+        );
+      }
     }
 
     // 4. Create Payment Payload & Sign
@@ -253,7 +312,7 @@ server.tool(
       ...x402HttpClient.encodePaymentSignatureHeader(paymentPayload),
     };
 
-    const paidRes = await fetch(url, { ...options, headers: paidHeaders });
+    const paidRes = await fetchWithTimeout(url, { ...options, headers: paidHeaders });
     const responseText = await paidRes.text();
 
     const settle = x402HttpClient.getPaymentSettleResponse(name => paidRes.headers.get(name));
@@ -276,4 +335,8 @@ server.tool(
 );
 
 // Start server
-server.start();
+const isMain =
+  process.argv[1] != null && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  server.start();
+}

@@ -15,8 +15,15 @@ const NETWORK = process.env.NETWORK || 'stellar:testnet';
 // Conservative defaults (in stroops: 1 XLM = 10_000_000 stroops).
 // Default max per-call: 1000 stroops = 0.0001 XLM
 // Default max per-session: 10000 stroops = 0.001 XLM
-const MAX_FEE_PER_CALL_STROOPS = BigInt(process.env.MAX_FEE_PER_CALL_STROOPS || '1000');
-const MAX_SESSION_SPEND_STROOPS = BigInt(process.env.MAX_SESSION_SPEND_STROOPS || '10000');
+function parseStroopEnv(envKey, defaultValue) {
+  const raw = process.env[envKey];
+  if (raw === undefined) return BigInt(defaultValue);
+  if (/^\d+$/.test(raw)) return BigInt(raw);
+  console.error(`ERROR: ${envKey} must be a decimal number of stroops, got "${raw}"`);
+  process.exit(1);
+}
+const MAX_FEE_PER_CALL_STROOPS = parseStroopEnv('MAX_FEE_PER_CALL_STROOPS', '1000');
+const MAX_SESSION_SPEND_STROOPS = parseStroopEnv('MAX_SESSION_SPEND_STROOPS', '10000');
 
 let sessionSpendStroops = 0n;
 
